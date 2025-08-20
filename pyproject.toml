@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "srt2csv"
+version = "0.0.1"
+description = "Tools for processing subtitles to csv files"
+authors = [{ name="distrib tech", email="distrib.tech@1plus1.tv" }]
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

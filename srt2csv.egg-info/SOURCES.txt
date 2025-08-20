@@ -1,7 +1,0 @@
-README.md
-setup.py
-srt2csv.egg-info/PKG-INFO
-srt2csv.egg-info/SOURCES.txt
-srt2csv.egg-info/dependency_links.txt
-srt2csv.egg-info/entry_points.txt
-srt2csv.egg-info/top_level.txt

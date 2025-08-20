@@ -1,9 +1,14 @@
 import csv
 import re
 from datetime import datetime, timedelta
-import pandas as pd
-import srt
 from pathlib import Path
+import io
+import srt
+import pandas as pd
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def format_timedelta(td: timedelta) -> str:
     """
@@ -17,100 +22,120 @@ def format_timedelta(td: timedelta) -> str:
     seconds = total_s % 60
     return f"{hours:02}:{minutes:02}:{seconds:02},{ms:03}"
 
+def fallback_parse_srt(srt_text):
+    """Minimal fallback parser if srt.parse() fails."""
+    lines = srt_text.replace('\ufeff', '').replace('\r\n', '\n').split('\n')
+    entries = []
+    subtitle_number = None
+    start_time = None
+    end_time = None
+    subtitle_text = []
+
+    for line in lines:
+        line = line.strip()
+        if line.isdigit():
+            subtitle_number = int(line)
+        elif re.match(r'\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}', line):
+            times = line.split(' --> ')
+            start_time = times[0]
+            end_time = times[1]
+        elif line == "":
+            if subtitle_number and start_time and end_time and subtitle_text:
+                text = ' '.join(subtitle_text)
+                start_dt = datetime.strptime(start_time, '%H:%M:%S,%f')
+                end_dt = datetime.strptime(end_time, '%H:%M:%S,%f')
+                entries.append(srt.Subtitle(index=subtitle_number, start=start_dt - datetime(1900, 1, 1),
+                                            end=end_dt - datetime(1900, 1, 1), content=text))
+            subtitle_number = None
+            start_time = None
+            end_time = None
+            subtitle_text = []
+        else:
+            subtitle_text.append(line)
+
+    # Final subtitle block
+    if subtitle_number and start_time and end_time and subtitle_text:
+        text = ' '.join(subtitle_text)
+        start_dt = datetime.strptime(start_time, '%H:%M:%S,%f')
+        end_dt = datetime.strptime(end_time, '%H:%M:%S,%f')
+        entries.append(srt.Subtitle(index=subtitle_number, start=start_dt - datetime(1900, 1, 1),
+                                    end=end_dt - datetime(1900, 1, 1), content=text))
+    return entries
+
+def srtfile_to_txt(srt_file: Path, csv_file: Path = None):
+    if isinstance(srt_file, Path):
+        if srt_file.is_file():
+            with open(srt_file, "r", encoding="utf-8-sig") as f:
+                txt_text = f.read()
+                return txt_to_csvfile(txt_text, csv_file)
+        else:
+            raise FileNotFoundError(f"File {srt_file} not found")
 
 
-
-def srt_to_csv(srt_file, csv_file):
-    def fallback_parse_srt(srt_text):
-        """Minimal fallback parser if srt.parse() fails."""
-        lines = srt_text.replace('\ufeff', '').replace('\r\n', '\n').split('\n')
-        entries = []
-        subtitle_number = None
-        start_time = None
-        end_time = None
-        subtitle_text = []
-
-        for line in lines:
-            line = line.strip()
-            if line.isdigit():
-                subtitle_number = int(line)
-            elif re.match(r'\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}', line):
-                times = line.split(' --> ')
-                start_time = times[0]
-                end_time = times[1]
-            elif line == "":
-                if subtitle_number and start_time and end_time and subtitle_text:
-                    text = ' '.join(subtitle_text)
-                    start_dt = datetime.strptime(start_time, '%H:%M:%S,%f')
-                    end_dt = datetime.strptime(end_time, '%H:%M:%S,%f')
-                    entries.append(srt.Subtitle(index=subtitle_number, start=start_dt - datetime(1900, 1, 1),
-                                                end=end_dt - datetime(1900, 1, 1), content=text))
-                subtitle_number = None
-                start_time = None
-                end_time = None
-                subtitle_text = []
-            else:
-                subtitle_text.append(line)
-
-        # Final subtitle block
-        if subtitle_number and start_time and end_time and subtitle_text:
-            text = ' '.join(subtitle_text)
-            start_dt = datetime.strptime(start_time, '%H:%M:%S,%f')
-            end_dt = datetime.strptime(end_time, '%H:%M:%S,%f')
-            entries.append(srt.Subtitle(index=subtitle_number, start=start_dt - datetime(1900, 1, 1),
-                                        end=end_dt - datetime(1900, 1, 1), content=text))
-        return entries
-
-    # Read the file
-    with open(srt_file, 'r', encoding='utf-8') as f:
-        srt_text = f.read()
-
-    # Try to parse with srt module
+def srttext_to_csvfile(srt_input: str, csv_file: Path = None) -> str:
+    """
+    Convert string with SRT subtitles to CSV.
+"""
+    srt_text = srt_input if isinstance(srt_input, str) else srt_input.decode("utf-8-sig")
+    # ---------- parse ----------
     try:
         subtitles = list(srt.parse(srt_text))
-    except Exception as e:
-        print(f"[Warning] Failed to parse with `srt` module: {e}")
+    except Exception:
         subtitles = fallback_parse_srt(srt_text)
 
-    # Write CSV
-    with open(csv_file, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL)
-        writer.writerow(['Number', 'Start Time', 'End Time', 'Duration', 'Symbol Duration', 'Text'])
+    # ---------- build CSV ----------
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, quoting=csv.QUOTE_ALL)
+    writer.writerow(["Number", "Start Time", "End Time", "Duration", "Symbol Duration", "Speaker", "Text", ])
 
-        for sub in subtitles:
-            start_str = format_timedelta(sub.start)
-            end_str = format_timedelta(sub.end)
-            duration = (sub.end - sub.start).total_seconds()
-            text = sub.content.replace('\n', ' ').strip()
-            symbol_duration = duration / len(text) if len(text) > 0 else 0
+    for sub in subtitles:
+        start_str = format_timedelta(sub.start)
+        end_str = format_timedelta(sub.end)
+        duration = (sub.end - sub.start).total_seconds()
+        text = sub.content.replace("\n", " ").strip()
+        symbol_duration = duration / len(text) if len(text) else 0.0
+        speaker, cleaned_text = get_text_speaker(text)
 
-            writer.writerow([sub.index, start_str, end_str, duration, symbol_duration, text])
-            print("\t".join(map(str, [sub.index, start_str, end_str, duration, symbol_duration, text])))
+        writer.writerow([sub.index, start_str, end_str, duration, symbol_duration, speaker, cleaned_text])
 
+    csv_text = buffer.getvalue()
 
+    # ---------- optional write ----------
+    if csv_file:
+        logger.info(f"Writing CSV to {csv_file}")
+        with open(csv_file, "w", newline="", encoding="utf-8") as out:
+            out.write(csv_text)
+    else:
+        logger.warning(f"CSV file not specified")
 
-def add_speaker_columns(input_csv, output_csv, speakers=[]):
-    with open(input_csv, 'r', encoding='utf-8') as input_file, open(output_csv, 'w', newline='',
-                                                                     encoding='utf-8') as output_file:
-        reader = csv.DictReader(input_file)
-        fieldnames = reader.fieldnames[:-1] + ['Speaker', 'Text']
-        writer = csv.DictWriter(output_file, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
-        writer.writeheader()
+    return csv_text
 
-        for row in reader:
-            text = row['Text']
-            # Extract the first occurrence of [ ... ]
-            match = re.search(r"\[(.*?)\]: ", text)
-            first_bracket_content =  match.group(1) if match else None
-            # Remove only the first occurrence
-            cleaned_text = re.sub(r"\[.*?\]: ", "", text, count=1).strip()
-            if first_bracket_content:
-                row["Speaker"] = first_bracket_content
-                row["Text"] = cleaned_text
-            else:
-                row["Speaker"] = ""
-            writer.writerow(row)
-            print("\t".join(map(str, row.values())))
+def get_text_speaker(text):
+    match = re.search(r"\[(.*?)\]: ", text)
+    first_bracket_content =  match.group(1) if match else None
+    # Remove only the first occurrence
+    cleaned_text = re.sub(r"\[.*?\]: ", "", text, count=1).strip()
+    speaker = first_bracket_content if first_bracket_content else ""    
+    return speaker, cleaned_text    
+
+# def add_speaker_columns(input_csv, output_csv, speakers=[]):
+#     with open(input_csv, 'r', encoding='utf-8') as input_file, open(output_csv, 'w', newline='',
+#                                                                      encoding='utf-8') as output_file:
+#         reader = csv.DictReader(input_file)
+#         fieldnames = reader.fieldnames[:-1] + ['Speaker', 'Text']
+#         writer = csv.DictWriter(output_file, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
+#         writer.writeheader()
+
+#         for row in reader:
+#             text = row['Text']
+#             speaker, cleaned_text = get_text_speaker(text)
+#             if speaker:
+#                 row["Speaker"] = first_bracket_content
+#                 row["Text"] = cleaned_text
+#             else:
+#                 row["Speaker"] = ""
+#             writer.writerow(row)
+#             print("\t".join(map(str, row.values())))
 
 def find_closest_from_floor_value_index(value, array):
     """

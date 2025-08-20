@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Process SRT Files",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}\\__main__.py",
+            "args": [
+                "-s", ".\\pytest", 
+                "-v", ".\\pytest\\vocabular.txt"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

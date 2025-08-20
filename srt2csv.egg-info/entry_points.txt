@@ -1,0 +1,2 @@
+[console_scripts]
+srt2csv = srt2csv.__main__:main

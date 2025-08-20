@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 import pandas as pd
 import srt
 from pathlib import Path
-from . import tts_audio
 
 def format_timedelta(td: timedelta) -> str:
     """
@@ -175,19 +174,22 @@ def get_speakers_from_folder(voice_folder):
                 speakers[snd_file_name]["ref_text"] = ref_text
         
         speeds_file = Path(voice_folder) / Path(snd_file).stem / "speeds.csv"
-        if speeds_file.is_file():
-            with open(speeds_file) as sf:
-                csv_reader = csv.DictReader(sf)
-                speeds = []
-                durations = []
-                symbol_durations = []
-                for row in csv_reader:
-                    speeds.append(float(row["speed"]))
-                    durations.append(float(row["duration"]))
-                    symbol_durations.append(float(row["symbol_duration"]))
-                speakers[snd_file_name]["speeds"] = speeds
-                speakers[snd_file_name]["durations"] = durations
-                speakers[snd_file_name]["symbol_durations"] = symbol_durations
+        if not speeds_file.is_file():
+            raise FileNotFoundError(
+                f"Expected speeds.csv for speaker '{snd_file_name}' at {speeds_file}"
+            )
+        with open(speeds_file) as sf:
+            csv_reader = csv.DictReader(sf)
+            speeds = []
+            durations = []
+            symbol_durations = []
+            for row in csv_reader:
+                speeds.append(float(row["speed"]))
+                durations.append(float(row["duration"]))
+                symbol_durations.append(float(row["symbol_duration"]))
+        speakers[snd_file_name]["speeds"] = speeds
+        speakers[snd_file_name]["durations"] = durations
+        speakers[snd_file_name]["symbol_durations"] = symbol_durations
 
     speakers["default_speaker_name"] = default_speaker_name
     speakers["speakers_names"] = list(speakers.keys())
@@ -200,17 +202,6 @@ def check_texts(voice_dir):
             print(f"I need text file {text_file_path}")
             exit(1)
     print("All text files are OK!")
-
-def check_speeds_csv(voice_dir, language):
-    for sound_file in Path(voice_dir).glob("*.wav"):
-        text_file_path = sound_file.with_suffix(".txt")
-        with open(text_file_path) as text_file:
-            text = text_file.read().strip()
-
-        speeds_file = Path(voice_dir) / Path(sound_file).stem / "speeds.csv"
-        if not speeds_file.is_file():
-            tts_audio.F5TTS(language=language).generate_speeds_csv(speeds_file, text, sound_file)
-    print("All speeds.csv are OK!")
 
 def take_first(dct):
     return next(iter(dct.items()))
